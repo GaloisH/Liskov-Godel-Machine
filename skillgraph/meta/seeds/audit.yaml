@@ -1,0 +1,22 @@
+# Audit v1.0, ordering only (Step 2 design doc §6): proposes the order in which open tickets are handled.
+# The mandatory signals A1 / A2 / A8 are raised by the kernel; Audit can order those tickets but not hide them,
+# and the kernel serves an overdue mandatory ticket first whatever this skill says.
+skill: Audit
+version: "1.0"
+interface:
+  inputs:  {queue: ticket_list}
+  outputs: {order: ticket_order}
+  post_safe: "outcome == done -> is_permutation(order, queue)"
+  post_live: "outcome == done"
+  budget: {llm_calls: 0}
+nodes:
+  rank:
+    kind: tool
+    reads: [queue]
+    writes: [order]
+    fn: audit.rank
+    ensures: "is_permutation(order, queue)"
+  done: {kind: terminal, outcome: done}
+entry: rank
+edges:
+  - {src: rank, dst: done, guard: "true"}

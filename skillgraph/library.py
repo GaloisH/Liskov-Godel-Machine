@@ -74,6 +74,9 @@ class SkillLibrary:
 
     # ------------------------------------------------------------ queries
 
+    def names(self) -> list[str]:
+        return sorted(self._entries)
+
     def versions(self, name: str) -> list[Version]:
         return sorted(self._entries.get(name, {}))
 

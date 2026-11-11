@@ -1,4 +1,4 @@
-# Debug v1.1: candidate δ1 from design doc §11.4. Only the guards of three outgoing edges change; the interface is unchanged (compatible, minor version +1).
+# Debug v1.1: candidate δ1 from Step 2 design doc §11.1. Only the guards of three outgoing edges change; the interface is unchanged (compatible, minor version +1).
 # W8 is now provable: rep && suite directly implies Post_safe.
 skill: Debug
 version: "1.1"

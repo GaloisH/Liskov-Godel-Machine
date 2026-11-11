@@ -1,4 +1,4 @@
-# WriteDocstring: a single-node skill, the degenerate case of a graph (design doc §13). Evolution may later grow it into a multi-node graph.
+# WriteDocstring: a single-node skill, the degenerate case of a graph (Step 1 design doc §11). Evolution may later grow it into a multi-node graph.
 skill: WriteDocstring
 version: "1.0"
 interface:

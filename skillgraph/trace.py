@@ -52,9 +52,21 @@ class Step:
                  sub_trace=self.sub_trace.to_dict() if self.sub_trace else None)
         return d
 
+    @staticmethod
+    def from_dict(d: dict) -> "Step":
+        return Step(t=d["t"], node=d["node"], kind=d["kind"], input_view=d.get("input_view") or {},
+                    input_hash=d.get("input_hash", ""), prompt_hash=d.get("prompt_hash", ""),
+                    output=d.get("output") or {}, contract_pre=_tv(d.get("contract_pre")),
+                    contract_post=_tv(d.get("contract_post")), inv=_tv(d.get("inv")), cost=d.get("cost") or {},
+                    next=d.get("next"), sub_trace=Trace.from_dict(d["sub_trace"]) if d.get("sub_trace") else None)
+
 
 def _s(tv):
     return None if tv is None else str(tv)
+
+
+def _tv(s):
+    return None if s is None else TV(s)
 
 
 @dataclass
@@ -71,6 +83,7 @@ class Trace:
     detail: str = ""
     frontier: dict | None = None      # divergence frontier of a cached replay
     post_eval: dict | None = None     # post-hoc evaluation: post_safe / post_live / inv
+    meta: dict = field(default_factory=dict)    # kernel bookkeeping: id / task / split / seq / virtual
 
     @property
     def llm_calls(self) -> int:
@@ -85,7 +98,18 @@ class Trace:
         return {"skill": self.skill, "version": self.version, "inputs": self.inputs, "pre": _s(self.pre),
                 "steps": [s.to_dict() for s in self.steps], "outcome": self.outcome, "outputs": self.outputs,
                 "status": self.status, "detail": self.detail, "frontier": self.frontier,
-                "post_eval": {k: _s(v) for k, v in self.post_eval.items()} if self.post_eval else None}
+                "post_eval": {k: _s(v) for k, v in self.post_eval.items()} if self.post_eval else None,
+                "meta": self.meta}
+
+    @staticmethod
+    def from_dict(d: dict) -> "Trace":
+        """Inverse of to_dict. Blackboard values must be JSON-serialisable to survive the round trip."""
+        return Trace(skill=d["skill"], version=d["version"], inputs=d.get("inputs") or {}, pre=_tv(d.get("pre")),
+                     steps=[Step.from_dict(x) for x in d.get("steps") or []], outcome=d.get("outcome"),
+                     outputs=d.get("outputs") or {}, status=d.get("status", "ok"), detail=d.get("detail", ""),
+                     frontier=d.get("frontier"),
+                     post_eval={k: _tv(v) for k, v in d["post_eval"].items()} if d.get("post_eval") else None,
+                     meta=d.get("meta") or {})
 
     def to_json(self) -> str:
         return json.dumps(self.to_dict(), ensure_ascii=False, indent=2, default=repr)

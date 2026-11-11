@@ -1,0 +1,41 @@
+# Propose v1.0: one agent drafts edit scripts, one tool lints them (Step 2 design doc §5.4).
+# The draft contract uses computable predicates only, so the reliability of this agent is measured exactly from day one.
+skill: Propose
+version: "1.0"
+interface:
+  inputs:  {report: fault_report}
+  outputs: {cands: "list[edit_script]", n_ok: "int[0..8]"}
+  pre: "single_target(report)"
+  post_safe: "outcome == done -> scripts_ok(cands)"
+  post_live: "outcome == done && n_ok >= 1"         # at least one candidate that passes Gate 0
+  budget: {llm_calls: 1}
+state:
+  hints: hints
+  target_ir: skill_ir
+nodes:
+  hints:
+    kind: tool
+    reads: [report]
+    writes: [hints, target_ir]
+    fn: propose.hints
+  draft:
+    kind: agent
+    reads: [report, target_ir, hints]
+    writes: [cands]
+    prompt: >-
+      Write one to four edit scripts that fix the fault in the report. Every script edits only the target skill and
+      uses only the allowed operations. Prefer the operations listed in the hints.
+    contract:
+      post: "parses(cands) && single_target(cands) && ops_allowed(cands) && len(cands) >= 1 && len(cands) <= 4"
+  lint:
+    kind: tool
+    reads: [report, cands]
+    writes: [cands, n_ok]
+    fn: propose.lint
+    ensures: "scripts_ok(cands)"
+  done: {kind: terminal, outcome: done}
+entry: hints
+edges:
+  - {src: hints, dst: draft, guard: "true"}
+  - {src: draft, dst: lint,  guard: "true"}
+  - {src: lint,  dst: done,  guard: "true"}

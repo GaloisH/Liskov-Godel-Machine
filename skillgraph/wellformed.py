@@ -29,6 +29,7 @@ class Check:
     code: str
     ok: bool
     messages: list = field(default_factory=list)
+    data: list = field(default_factory=list)      # W8 only: structured counterexamples (JSON-serialisable)
 
     @property
     def status(self) -> str:
@@ -146,8 +147,11 @@ class _Facts:
                 out.append((f"{e.src} → {v}", self._edge(e, self._node(e.src, self.IN[e.src]))))
         return out
 
-    def prove(self, v, goal, types, shown=None) -> list:
-        """Prove goal on every path reaching v. Returns the paths where it cannot be proved, with counterexamples."""
+    def prove(self, v, goal, types, shown=None, sink=None) -> list:
+        """Prove goal on every path reaching v. Returns the paths where it cannot be proved, with counterexamples.
+
+        If sink is a list, a structured record {node, src, at, state} is appended for every counterexample.
+        """
         fails, shown = [], shown or show(goal)
         for label, facts in self.arriving(v):
             try:
@@ -157,6 +161,10 @@ class _Facts:
                 continue
             if cex is not None:
                 fails.append(f"via {label}: cannot prove {shown}; counterexample: {fmt_cex(cex)}")
+                if sink is not None:
+                    state = {k: sorted(x) if isinstance(x, (set, frozenset)) else x for k, x in cex.items()}
+                    sink.append({"node": v, "src": label.split(" → ")[0] if " → " in label else None,
+                                 "at": label, "state": state})
         return fails
 
 
@@ -416,14 +424,18 @@ def _budget(skill, resolver) -> Check:
 
 
 def _w8(skill, facts) -> Check:
-    msgs, T = [], skill.types
+    msgs, data, T = [], [], skill.types
     for v, n in skill.nodes.items():
+        sink = []
         if n.kind == "agent":
-            msgs += [f"precondition of node {v}: {m}" for m in facts.prove(v, n.contract.pre, T)]
+            msgs += [f"precondition of node {v}: {m}" for m in facts.prove(v, n.contract.pre, T, sink=sink)]
+            data += [{"kind": "pre", **x} for x in sink]
         elif n.kind == "terminal":
             goal = subst(skill.interface.post_safe, {"outcome": Lit(n.outcome)})
-            msgs += [f"terminal {v}: {m}" for m in facts.prove(v, goal, T, f"Post_safe ({show(skill.interface.post_safe)})")]
-    return Check("W8", not msgs, msgs)
+            msgs += [f"terminal {v}: {m}" for m in facts.prove(v, goal, T, f"Post_safe ({show(skill.interface.post_safe)})",
+                                                             sink=sink)]
+            data += [{"kind": "post", "terminal": v, **x} for x in sink]
+    return Check("W8", not msgs, msgs, data)
 
 
 def check_skill(skill, resolver=None) -> Report:

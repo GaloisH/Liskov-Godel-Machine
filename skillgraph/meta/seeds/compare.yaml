@@ -1,0 +1,33 @@
+# Compare v1.0, minimal version (Step 2 design doc §5.5): the judgement is the kernel's, the strategy is this skill's.
+# `check` asks the kernel for an evidence check of every candidate; `pick` is the strategy node that chooses among the
+# candidates that passed and assembles the certificate. Done means "admit this one"; give_up means "keep the current version".
+skill: Compare
+version: "1.0"
+interface:
+  inputs:  {ticket: ticket, report: fault_report, cands: "list[edit_script]"}
+  outputs: {cert: cert}
+  post_safe: "outcome == done -> has_evidence(cert)"
+  post_live: "outcome == done"
+  budget: {llm_calls: 0}
+state:
+  results: check_results
+  verdict: "enum{admit, keep}"
+nodes:
+  check:
+    kind: tool
+    reads: [ticket, report, cands]
+    writes: [results]
+    fn: compare.check
+  pick:
+    kind: tool
+    reads: [ticket, report, results]
+    writes: [cert, verdict]
+    fn: compare.pick
+    ensures: "verdict == admit -> has_evidence(cert)"
+  done: {kind: terminal, outcome: done}
+  keep: {kind: terminal, outcome: give_up}
+entry: check
+edges:
+  - {src: check, dst: pick, guard: "true"}
+  - {src: pick,  dst: done, guard: "verdict == admit"}
+  - {src: pick,  dst: keep, guard: "verdict == keep"}

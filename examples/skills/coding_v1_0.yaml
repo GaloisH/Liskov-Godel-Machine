@@ -1,6 +1,6 @@
-# Coding v1.0: the version from design doc §11.1. On test failure it calls Debug, and goes straight to Done when Debug returns done.
+# Coding v1.0: the version from Step 1 design doc §9.1. On test failure it calls Debug, and goes straight to Done when Debug returns done.
 # W8 cannot be proved: Debug only promises "fix the one failing test in the report without regressions",
-# which does not imply "all acceptance tests pass". This is "the caller relies on a promise that is too weak" (§9.2).
+# which does not imply "all acceptance tests pass". This is "the caller relies on a promise that is too weak" (Step 2 design doc §5.2.2).
 skill: Coding
 version: "1.0"
 interface:

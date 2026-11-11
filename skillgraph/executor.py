@@ -85,6 +85,25 @@ class ReplayBackend:
         return q.popleft()
 
 
+class FallbackBackend:
+    """Cached replay up to the divergence frontier, then a live backend beyond it (a partial rollout).
+
+    live_calls counts the agent calls that could not be served from the cache.
+    """
+
+    def __init__(self, traces, live):
+        self.replay, self.live, self.live_calls = ReplayBackend(traces), live, 0
+
+    def invoke(self, call: AgentCall) -> dict:
+        try:
+            return self.replay.invoke(call)
+        except CacheMiss:
+            if self.live is None:
+                raise
+            self.live_calls += 1
+            return self.live.invoke(call)
+
+
 class Predicates:
     """Predicates used in contracts. Those in runtime can be computed at run time; those in judge are only usable in post-hoc evaluation (hidden tests, reference answers, humans).
 

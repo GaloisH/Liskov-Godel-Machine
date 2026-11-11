@@ -1,0 +1,34 @@
+# Diagnose v1.0: blame assignment (Step 2 design doc §5.2.3). The algorithm is deterministic, so the body is one tool;
+# an agent is only needed when the evidence is undecided (F3).
+skill: Diagnose
+version: "1.0"
+interface:
+  inputs:  {ticket: ticket}
+  outputs: {report: fault_report}
+  pre: "well_formed(ticket)"
+  post_safe: "outcome == done -> single_target(report)"
+  post_live: "outcome == done"
+  budget: {llm_calls: 1}
+state:
+  fault: "enum{F0, F1, F2, F3}"
+nodes:
+  blame:
+    kind: tool
+    reads: [ticket]
+    writes: [report, fault]
+    fn: diagnose.blame
+    ensures: "single_target(report)"
+  investigate:
+    kind: agent
+    reads: [ticket, report]
+    writes: [report, fault]
+    prompt: >-
+      The contract checks in this trace are undecided. Gather evidence with read-only tools and decide the fault type.
+      Keep exactly one target skill. If you conclude F1 or F2, cite the steps you rely on; if it stays undecided, keep F3.
+    contract: {post: "single_target(report) && (fault in {F1, F2} -> cites_step(report))"}
+  done: {kind: terminal, outcome: done}
+entry: blame
+edges:
+  - {src: blame,       dst: done,        guard: "fault != F3"}
+  - {src: blame,       dst: investigate, guard: "fault == F3"}
+  - {src: investigate, dst: done,        guard: "true"}

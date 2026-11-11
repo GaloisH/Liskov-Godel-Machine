@@ -1,4 +1,4 @@
-# Debug v1.0: the version from design doc §11.1, with a deliberate flaw: the guard to Done checks rep but not suite.
+# Debug v1.0: the version from Step 1 design doc §9.1, with a deliberate flaw: the guard to Done checks rep but not suite.
 # W1–W7 all pass, but W8 cannot be proved (spec consistency unproved): a warning visible at admission time.
 skill: Debug
 version: "1.0"

@@ -1,0 +1,63 @@
+# Evolve v1.0: the main loop of failure-driven repair (Step 2 design doc §5.1). Tools and calls only, no agent.
+#
+# Differences from the first draft of the IR in the design document:
+#   * submit also writes `accepted`, and only `accepted` leads to done. With an unconditional submit → done the skill
+#     would hand back done after a rejected submit, and its own W8 could not be proved.
+#   * "one library write per run" and "never touches the kernel" are enforced by the kernel's write token, not
+#     declared as invariants: they are not blackboard variables.
+#   * Compare hands back done only for verdict == admit, so the edges after it test compare.outcome alone
+#     (a call node's outputs are only written on done, so a guard may not read them: W4).
+#   * the create branch is not connected yet: Create does not exist in this version.
+skill: Evolve
+version: "1.0"
+interface:
+  inputs:  {ticket: ticket}
+  outputs: {new_version: skill_ref}
+  pre: "well_formed(ticket)"
+  post_safe: "outcome == done -> kernel_accepted(new_version)"
+  post_live: "outcome == done"
+  budget: {llm_calls: 4}
+state:
+  kind: "enum{failure, audit, create, recheck, meta}"
+  report: fault_report
+  cands: "list[edit_script]"
+  n_ok: "int[0..8]"
+  cert: cert
+  accepted: bool
+  r: "int[0..1]"                 # number of times candidates were proposed again
+nodes:
+  read:     {kind: tool, reads: [ticket], writes: [kind], fn: kernel.read_ticket}
+  diagnose: {kind: call, skill: "Diagnose >= 1.0", bind_in: {ticket: ticket}, bind_out: {report: report}}
+  propose:  {kind: call, skill: "Propose >= 1.0", bind_in: {report: report}, bind_out: {cands: cands}}
+  gate0:    {kind: tool, reads: [report, cands], writes: [cands, n_ok], fn: kernel.gate0}
+  compare:
+    kind: call
+    skill: "Compare >= 1.0"
+    bind_in:  {ticket: ticket, report: report, cands: cands}
+    bind_out: {cert: cert}
+  submit:
+    kind: tool
+    reads: [cert]
+    writes: [new_version, accepted]
+    fn: kernel.submit
+    ensures: "accepted == kernel_accepted(new_version)"
+  done:        {kind: terminal, outcome: done}
+  give_up:     {kind: terminal, outcome: give_up}
+  keep:        {kind: terminal, outcome: give_up}      # no candidate is better: keep the current version
+  rejected:    {kind: terminal, outcome: give_up}      # the kernel rejected the certificate
+  unsupported: {kind: terminal, outcome: give_up}      # create tickets: not handled yet
+entry: read
+edges:
+  - {src: read,     dst: diagnose,    guard: "kind != create"}
+  - {src: read,     dst: unsupported, guard: "kind == create"}
+  - {src: diagnose, dst: propose,     guard: "diagnose.outcome == done"}
+  - {src: diagnose, dst: give_up,     guard: "diagnose.outcome != done"}
+  - {src: propose,  dst: gate0,       guard: "propose.outcome == done"}
+  - {src: propose,  dst: give_up,     guard: "propose.outcome != done"}
+  - {src: gate0,    dst: compare,     guard: "n_ok > 0"}
+  - {src: gate0,    dst: propose,     guard: "n_ok == 0 && r < 1", counter: r, label: re-propose}
+  - {src: gate0,    dst: give_up,     guard: "n_ok == 0 && r >= 1"}
+  - {src: compare,  dst: submit,      guard: "compare.outcome == done"}
+  - {src: compare,  dst: keep,        guard: "compare.outcome != done"}
+  - {src: submit,   dst: done,        guard: "accepted"}
+  - {src: submit,   dst: rejected,    guard: "!accepted"}

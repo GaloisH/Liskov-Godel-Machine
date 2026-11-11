@@ -138,7 +138,7 @@ def ex3_interface_refinement(lib):
     out.skill(v11, note="v1.1: only three edge guards change, interface unchanged, W8 provable.")
     print(check_refinement(v10, v11))
 
-    def weaken(d):          # δ4 from design doc §11.4: weaken the promise to "only the repro test passes"
+    def weaken(d):          # δ4 from Step 2 design doc §11.1: weaken the promise to "only the repro test passes"
         d["interface"]["post_safe"] = "outcome == done -> passes_repro(patch, issue, repo)"
         d["edges"][2]["guard"], d["edges"][3]["guard"], d["edges"][4]["guard"] = "rep", "!rep && k < 2", "!rep && k >= 2"
 
@@ -202,7 +202,7 @@ def ex5_kernel_guards(lib):
     print(tr.pretty())
     out.trace(debug, tr, "reject_no_repro")
 
-    print("\nThe agent tries to pass by editing the tests (δ3 in §11.4) → stopped by the run-time invariant check, no outputs delivered:")
+    print("\nThe agent tries to pass by editing the tests (δ3 in Step 2 design doc §11.1) → stopped by the run-time invariant check, no outputs delivered:")
     ex = executor(lib, {"locate": LOCATE, "write_patch": patches(W.D_CHEAT)})
     tr = ex.run(debug, {"issue": W.ISSUE, "repo": W.REPO})
     print(tr.pretty())
