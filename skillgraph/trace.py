@@ -1,4 +1,4 @@
-"""运行轨迹（设计文档 §7.2）：进化的唯一证据来源。"""
+"""Run traces (design doc §7.2): the only source of evidence for evolution."""
 from __future__ import annotations
 
 import hashlib
@@ -10,7 +10,7 @@ from .expr import UNKNOWN
 
 
 class TV(str, Enum):
-    """契约检查的三值结果。"""
+    """Three-valued result of a contract check."""
     T = "⊤"
     F = "⊥"
     U = "?"
@@ -24,7 +24,7 @@ class TV(str, Enum):
 
 
 def digest(obj) -> str:
-    """内容哈希：缓存重放的键。"""
+    """Content hash: the key for cached replay."""
     s = json.dumps(obj, sort_keys=True, ensure_ascii=False, default=repr)
     return hashlib.sha256(s.encode("utf-8")).hexdigest()[:16]
 
@@ -34,16 +34,16 @@ class Step:
     t: int
     node: str
     kind: str
-    input_view: dict = field(default_factory=dict)   # 读集对应的黑板内容
+    input_view: dict = field(default_factory=dict)   # blackboard contents of the read set
     input_hash: str = ""
-    prompt_hash: str = ""                            # 仅 agent
+    prompt_hash: str = ""                            # agent only
     output: dict = field(default_factory=dict)
     contract_pre: TV | None = None
-    contract_post: TV | None = None                  # 归责用
+    contract_post: TV | None = None                  # for blame assignment
     inv: TV | None = None
     cost: dict = field(default_factory=dict)         # llm_calls / seconds
-    next: str | None = None                          # 走了哪条出边
-    sub_trace: "Trace | None" = None                 # Skill 调用节点的子轨迹
+    next: str | None = None                          # which outgoing edge was taken
+    sub_trace: "Trace | None" = None                 # sub-trace of a skill call node
 
     def to_dict(self) -> dict:
         d = {k: getattr(self, k) for k in ("t", "node", "kind", "input_view", "input_hash", "prompt_hash",
@@ -64,13 +64,13 @@ class Trace:
     inputs: dict
     pre: TV | None = None
     steps: list = field(default_factory=list)
-    outcome: str | None = None        # done / give_up / reject；重放停在前沿时为 None
+    outcome: str | None = None        # done / give_up / reject; None when a replay stops at the frontier
     outputs: dict = field(default_factory=dict)
     status: str = "ok"                # ok / pre_violated / inv_violation / budget_exceeded / stuck
                                       # / type_error / tool_error / frontier
     detail: str = ""
-    frontier: dict | None = None      # 缓存重放的分歧前沿
-    post_eval: dict | None = None     # 事后评估：post_safe / post_live / inv
+    frontier: dict | None = None      # divergence frontier of a cached replay
+    post_eval: dict | None = None     # post-hoc evaluation: post_safe / post_live / inv
 
     @property
     def llm_calls(self) -> int:
@@ -78,7 +78,7 @@ class Trace:
 
     @property
     def exact(self) -> bool:
-        """重放是否一路走到终点（没有碰到新的 Agent 输入）。"""
+        """Did the replay reach a terminal (without needing new agent input)?"""
         return self.status != "frontier"
 
     def to_dict(self) -> dict:
@@ -98,9 +98,9 @@ class Trace:
                 lines.append(f"{pad}  t{s.t} {s.node}")
                 continue
             dec = {k: v for k, v in s.output.items() if isinstance(v, (bool, int, str)) and 0 < len(str(v)) < 24}
-            bits = [f"t{s.t} {s.node}（{s.kind}）"]
+            bits = [f"t{s.t} {s.node} ({s.kind})"]
             if s.contract_post is not None:
-                bits.append(f"契约 {s.contract_post}")
+                bits.append(f"contract {s.contract_post}")
             if s.inv is TV.F:
                 bits.append("Inv ⊥")
             if dec:
@@ -112,12 +112,12 @@ class Trace:
                 lines.append(s.sub_trace.pretty(indent + 6))
         if self.status == "frontier":
             f = self.frontier
-            lines.append(f"{pad}  ── 分歧前沿: {f['skill']}.{f['node']} 需要新的 Agent 输出，之前的结果是精确的反事实")
+            lines.append(f"{pad}  ── divergence frontier: {f['skill']}.{f['node']} needs new agent output; everything before it is an exact counterfactual")
         else:
-            tail = f"{pad}  结果: {self.outcome}"
+            tail = f"{pad}  outcome: {self.outcome}"
             if self.status != "ok":
-                tail += f"（{self.status}: {self.detail}）"
+                tail += f" ({self.status}: {self.detail})"
             if self.post_eval:
-                tail += "；事后评估 " + ", ".join(f"{k} = {v}" for k, v in self.post_eval.items())
-            lines.append(tail + f"；模型调用 {self.llm_calls} 次")
+                tail += "; post-hoc evaluation " + ", ".join(f"{k} = {v}" for k, v in self.post_eval.items())
+            lines.append(tail + f"; model calls: {self.llm_calls}")
         return "\n".join(lines)

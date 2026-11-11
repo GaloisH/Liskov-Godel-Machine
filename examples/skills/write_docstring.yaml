@@ -1,4 +1,4 @@
-# WriteDocstring：单节点 skill——图的退化情况（设计文档 §13）。以后进化时可以把它扩展成多节点图。
+# WriteDocstring: a single-node skill, the degenerate case of a graph (design doc §13). Evolution may later grow it into a multi-node graph.
 skill: WriteDocstring
 version: "1.0"
 interface:
@@ -12,7 +12,7 @@ nodes:
     kind: agent
     reads: [code]
     writes: [doc]
-    prompt: "为这段代码写一句话的 docstring。"
+    prompt: "Write a one-sentence docstring for this code."
     contract: {pre: "len(code) > 0", post: "len(doc) > 0 && describes(doc, code)"}
   done: {kind: terminal, outcome: done}
 entry: write

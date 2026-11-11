@@ -1,5 +1,5 @@
-# ReviewedPatch：带代码评审的实现流程。演示"语义分支"的写法（设计文档 §4）——
-# "代码是否干净"不能写在边上，而是由 review 这个 Agent 节点输出枚举值 verdict，边只判定 verdict。
+# ReviewedPatch: an implementation workflow with code review. Shows how to write a "semantic branch" (design doc §4):
+# "is the code clean" cannot go on an edge; instead the review agent node outputs the enum verdict, and edges only test verdict.
 skill: ReviewedPatch
 version: "1.0"
 interface:
@@ -15,7 +15,7 @@ state:
   ok: bool
   round: "int[0..2]"
 nodes:
-  init:                         # implement 在第一轮就要读 feedback，所以必须先写一次（W4：先写后读）
+  init:                         # implement reads feedback in the first round, so it must be written first (W4: write before read)
     kind: tool
     reads: []
     writes: [feedback]
@@ -24,13 +24,13 @@ nodes:
     kind: agent
     reads: [spec, repo, feedback]
     writes: [patch]
-    prompt: "实现需求；如果有评审意见，按意见修改。不要碰测试。"
+    prompt: "Implement the spec; if there is review feedback, address it. Do not touch the tests."
     contract: {post: "!touches_tests(patch)"}
   review:
     kind: agent
     reads: [spec, patch]
     writes: [verdict, feedback]
-    prompt: "评审补丁。干净就 approve，否则 revise 并给出意见。"
+    prompt: "Review the patch. approve if it is clean, otherwise revise and give feedback."
     contract: {post: "verdict == approve -> clean(patch)"}
   test:
     kind: tool

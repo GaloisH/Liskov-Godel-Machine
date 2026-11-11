@@ -1,8 +1,8 @@
-"""蕴含判定：代替设计文档里的 SMT 查询。
+"""Entailment checking: replaces the SMT queries of the design document.
 
-做法：可判定变量在有限定义域上穷举；含谓词调用或不透明变量的原子公式
-（如 `relevant(F)`、`len(F) > 0`）抽象成自由布尔变量，相当于未解释函数的命题抽象。
-这个判定是**可靠**的（判为有效就一定有效），但对谓词之间的语义关系不完备。
+Method: decidable variables are enumerated over their finite domains; atoms containing predicate calls or opaque variables
+(e.g. `relevant(F)`, `len(F) > 0`) are abstracted to free Boolean variables, i.e. a propositional abstraction of uninterpreted functions.
+The check is **sound** (anything judged valid is valid) but incomplete with respect to semantic relations between predicates.
 """
 from __future__ import annotations
 
@@ -33,7 +33,7 @@ def _is_iff(e, types) -> bool:
 
 
 def _symbols(e, types, out: set):
-    """收集可判定变量名和原子公式（原子以 "@" 开头）。"""
+    """Collect decidable variable names and atoms (atoms start with "@")."""
     if isinstance(e, Call):
         out.add("@" + show(e))
     elif isinstance(e, Var):
@@ -63,8 +63,8 @@ def _abs_eval(e, env, types):
         if e.name in env:
             return env[e.name]
         if e.name in types:
-            raise ExprError(f"不透明变量 {e.name} 不能直接参与判定")
-        return e.name                       # 枚举字面量
+            raise ExprError(f"opaque variable {e.name} cannot take part in the check directly")
+        return e.name                       # enum literal
     if isinstance(e, Call):
         return env["@" + show(e)]
     if isinstance(e, SetLit):
@@ -83,10 +83,10 @@ def _abs_eval(e, env, types):
 
 
 def entails(premises, goal, types, limit: int = 1 << 20):
-    """premises ⊨ goal 是否有效。有效返回 None，否则返回一个反例（变量/原子 → 取值）。"""
+    """Is premises ⊨ goal valid? Returns None if valid, otherwise a counterexample (variable/atom → value)."""
     gsyms = _symbols(goal, types, set())
     info = [(p, _symbols(p, types, set())) for p in premises]
-    # 影响锥：只保留和目标（传递地）共享符号的前提。丢掉前提只会让结论更弱，所以是可靠的。
+    # Cone of influence: keep only premises that (transitively) share symbols with the goal. Dropping premises only weakens the result, so this is sound.
     rel, used, changed = set(gsyms), [], True
     while changed:
         changed = False
@@ -102,7 +102,7 @@ def entails(premises, goal, types, limit: int = 1 << 20):
     for d in doms:
         size *= len(d)
     if size > limit:
-        raise TooLarge(f"状态空间过大（{size}），无法穷举")
+        raise TooLarge(f"state space too large ({size}) to enumerate")
     names = dvars + atoms
     for vals in product(*doms):
         env = dict(zip(names, vals))
@@ -112,7 +112,7 @@ def entails(premises, goal, types, limit: int = 1 << 20):
 
 
 def exactly_one(guards):
-    """构造"恰好一个成立"的公式（W1 用）。"""
+    """Build an "exactly one holds" formula (used by W1)."""
     terms = []
     for i, g in enumerate(guards):
         t = g
@@ -129,4 +129,4 @@ def exactly_one(guards):
 def fmt_cex(cex: dict) -> str:
     def f(v):
         return {True: "true", False: "false"}.get(v, v) if isinstance(v, bool) else v
-    return ", ".join(f"{k} = {f(v)}" for k, v in cex.items()) or "（空状态）"
+    return ", ".join(f"{k} = {f(v)}" for k, v in cex.items()) or "(empty state)"

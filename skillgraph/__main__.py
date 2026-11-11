@@ -1,6 +1,6 @@
-"""命令行：
-    python -m skillgraph check <目录>     对目录下所有 skill 做入库检查，打印报告
-    python -m skillgraph show  <目录> <名字> <输出.svg>   把某个 skill（最新版本）的图渲染成 SVG
+"""Command line:
+    python -m skillgraph check <dir>     run the admission check on every skill in a directory and print the report
+    python -m skillgraph show  <dir> <name> <out.svg>   render the graph of a skill (latest version) to SVG
 """
 import sys
 
@@ -24,7 +24,7 @@ def main(argv):
     for key, r in results.items():
         if isinstance(r, GateError):
             bad += 1
-            print(f"✗ {key} 入库被拒绝: {r}")
+            print(f"✗ {key} rejected by the admission gate: {r}")
             if hasattr(r.report, "checks"):
                 print(r.report)
         else:

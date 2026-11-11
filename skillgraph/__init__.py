@@ -1,4 +1,4 @@
-"""Skill 图结构：设计文档《01_整体问题框架与Skill图结构》§1–§8 的实现（不含进化）。"""
+"""Skill graphs: implementation of §1–§8 of the design document (evolution not included)."""
 from .executor import AgentCall, CacheMiss, Executor, Predicates, ReplayBackend, ScriptedBackend
 from .expr import UNKNOWN, parse, show
 from .library import Beta, Certificate, GateError, SkillLibrary, Stats

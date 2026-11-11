@@ -1,6 +1,6 @@
-# Coding v1.0：设计文档 §11.1 的版本——测试失败就调用 Debug，Debug 交回 done 就直接 Done。
-# W8 证明不了：Debug 只承诺"修好报告里的那一个失败测试且不回归"，
-# 推不出"全部验收测试通过"。这是"调用方依赖了一个不够强的承诺"（§9.2）。
+# Coding v1.0: the version from design doc §11.1. On test failure it calls Debug, and goes straight to Done when Debug returns done.
+# W8 cannot be proved: Debug only promises "fix the one failing test in the report without regressions",
+# which does not imply "all acceptance tests pass". This is "the caller relies on a promise that is too weak" (§9.2).
 skill: Coding
 version: "1.0"
 interface:
@@ -19,13 +19,13 @@ nodes:
     kind: agent
     reads: [spec, repo]
     writes: [plan]
-    prompt: "阅读需求，写出实现计划。"
+    prompt: "Read the spec and write an implementation plan."
     contract: {post: "len(plan) > 0"}
   implement:
     kind: agent
     reads: [spec, repo, plan]
     writes: [patch]
-    prompt: "按计划实现需求，不要碰测试。"
+    prompt: "Implement the spec following the plan. Do not touch the tests."
     contract: {pre: "len(plan) > 0", post: "!touches_tests(patch)"}
   test:
     kind: tool
@@ -48,5 +48,5 @@ edges:
   - {src: implement,  dst: test,      guard: "true"}
   - {src: test,  dst: done,    guard: "all_pass"}
   - {src: test,  dst: debug,   guard: "!all_pass"}
-  - {src: debug, dst: done,    guard: "debug.outcome == done"}       # ← 漏洞：没有重新验收
+  - {src: debug, dst: done,    guard: "debug.outcome == done"}       # ← flaw: no re-acceptance
   - {src: debug, dst: give_up, guard: "debug.outcome != done"}

@@ -1,7 +1,7 @@
-"""Skill 的数据模型与 YAML 读取（设计文档 §1–§5）。
+"""Skill data model and YAML loading (design doc §1–§5).
 
-接口层 = Interface，图层 = state / nodes / edges / entry。
-统计层不属于 skill 定义本身，放在 library.Stats 里，按 (名字, 版本) 存放。
+Interface layer = Interface; graph layer = state / nodes / edges / entry.
+The statistics layer is not part of the skill definition; it lives in library.Stats, keyed by (name, version).
 """
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ class Version:
             return v
         m = re.fullmatch(r"v?(\d+)(?:\.(\d+))?", str(v).strip())
         if not m:
-            raise SkillFormatError(f"非法版本号: {v!r}（应形如 \"1.0\"）")
+            raise SkillFormatError(f"invalid version: {v!r} (expected something like \"1.0\")")
         return Version(int(m[1]), int(m[2] or 0))
 
     def __str__(self):
@@ -39,8 +39,8 @@ class Version:
 
 @dataclass
 class Contract:
-    pre: object = TRUE        # 前置条件 A
-    post: object = TRUE       # 后置条件 Q
+    pre: object = TRUE        # precondition A
+    post: object = TRUE       # postcondition Q
 
 
 @dataclass
@@ -49,15 +49,15 @@ class Node:
     kind: str                                   # tool | agent | call | terminal
     reads: tuple = ()
     writes: tuple = ()
-    contract: Contract = field(default_factory=Contract)   # agent 的契约；tool 的 ensures 也放在 post 里
-    fn: str = ""                                # tool：调用的函数名
+    contract: Contract = field(default_factory=Contract)   # agent contract; a tool's ensures also goes into post
+    fn: str = ""                                # tool: name of the function to call
     prompt: str = ""                            # agent
-    prior: tuple = (1.0, 1.0)                   # agent：可靠度的 Beta 先验
+    prior: tuple = (1.0, 1.0)                   # agent: Beta prior on reliability
     fault_model: dict = field(default_factory=dict)
-    skill: str = ""                             # call：被调 skill 的名字
-    min_version: Version = Version(0, 0)        # call：版本下界
-    bind_in: dict = field(default_factory=dict)     # 被调输入 → 调用方变量
-    bind_out: dict = field(default_factory=dict)    # 被调输出 → 调用方变量
+    skill: str = ""                             # call: name of the callee skill
+    min_version: Version = Version(0, 0)        # call: version lower bound
+    bind_in: dict = field(default_factory=dict)     # callee input → caller variable
+    bind_out: dict = field(default_factory=dict)    # callee output → caller variable
     outcome: str = ""                           # terminal
 
     @property
@@ -70,20 +70,20 @@ class Edge:
     src: str
     dst: str
     guard: object = TRUE
-    counter: str | None = None      # 回边上的循环计数器：每经过一次由执行器加一
-    label: str | None = None        # 可选的边名（只用于画图），如 retry / re-check
+    counter: str | None = None      # loop counter on a back edge: incremented by the executor on each traversal
+    label: str | None = None        # optional edge name (for drawing only), e.g. retry / re-check
 
 
 @dataclass
 class Interface:
-    inputs: dict = field(default_factory=dict)       # X_in: 名字 → 类型
-    defaults: dict = field(default_factory=dict)     # 可选输入的默认值
+    inputs: dict = field(default_factory=dict)       # X_in: name → type
+    defaults: dict = field(default_factory=dict)     # defaults for optional inputs
     outputs: dict = field(default_factory=dict)      # X_out
     pre: object = TRUE
     post_safe: object = TRUE
     post_live: object = None
     inv: list = field(default_factory=list)
-    budget: dict = field(default_factory=dict)       # 目前只静态检查 llm_calls
+    budget: dict = field(default_factory=dict)       # only llm_calls is checked statically for now
 
     @property
     def types(self) -> dict:
@@ -95,7 +95,7 @@ class Skill:
     name: str
     version: Version
     interface: Interface
-    state: dict                     # X: 全部黑板变量 → 类型（含输入输出）
+    state: dict                     # X: all blackboard variables → type (including inputs and outputs)
     nodes: dict                     # id → Node
     entry: str
     edges: list
@@ -135,7 +135,7 @@ def _prior(p):
     if isinstance(p, str):
         m = _BETA.match(p)
         if not m:
-            raise SkillFormatError(f"非法先验: {p!r}（应形如 Beta(1,1)）")
+            raise SkillFormatError(f"invalid prior: {p!r} (expected something like Beta(1,1))")
         return float(m[1]), float(m[2])
     return float(p[0]), float(p[1])
 
@@ -143,14 +143,14 @@ def _prior(p):
 def _node(nid: str, d: dict) -> Node:
     kind = d.get("kind")
     if kind not in ("tool", "agent", "call", "terminal"):
-        raise SkillFormatError(f"节点 {nid}: 未知类型 {kind!r}")
+        raise SkillFormatError(f"node {nid}: unknown kind {kind!r}")
     n = Node(id=nid, kind=kind, reads=tuple(d.get("reads", ())), writes=tuple(d.get("writes", ())))
     c = d.get("contract") or {}
     n.contract = Contract(parse(c.get("pre")), parse(d.get("ensures", c.get("post"))))
     if kind == "tool":
         n.fn = d.get("fn", "")
         if not n.fn:
-            raise SkillFormatError(f"工具节点 {nid}: 缺少 fn")
+            raise SkillFormatError(f"tool node {nid}: missing fn")
     elif kind == "agent":
         n.prompt = str(d.get("prompt", ""))
         n.prior = _prior(d.get("prior", (1, 1)))
@@ -158,7 +158,7 @@ def _node(nid: str, d: dict) -> Node:
     elif kind == "call":
         m = _CALL.match(str(d.get("skill", "")))
         if not m:
-            raise SkillFormatError(f"调用节点 {nid}: skill 应形如 \"Debug >= 1.0\"")
+            raise SkillFormatError(f"call node {nid}: skill should look like \"Debug >= 1.0\"")
         n.skill, n.min_version = m[1], Version.parse(m[2] or "0.0")
         n.bind_in, n.bind_out = dict(d.get("bind_in", {})), dict(d.get("bind_out", {}))
         n.reads = tuple(dict.fromkeys(n.bind_in.values()))
@@ -166,12 +166,12 @@ def _node(nid: str, d: dict) -> Node:
     else:
         n.outcome = d.get("outcome", "")
         if n.outcome not in OUTCOMES:
-            raise SkillFormatError(f"终点 {nid}: outcome 必须是 {OUTCOMES} 之一")
+            raise SkillFormatError(f"terminal {nid}: outcome must be one of {OUTCOMES}")
     return n
 
 
 def load_skill(src) -> Skill:
-    """从 YAML 文件路径、YAML 文本或 dict 读取一个 skill。"""
+    """Load one skill from a YAML file path, YAML text or a dict."""
     if isinstance(src, dict):
         d = src
     else:
@@ -193,7 +193,7 @@ def load_skill(src) -> Skill:
         for src_map in (inputs, outputs, {k: parse_type(v) for k, v in (d.get("state") or {}).items()}):
             for k, t in src_map.items():
                 if state.setdefault(k, t) != t:
-                    raise SkillFormatError(f"变量 {k} 的类型声明冲突: {state[k]} 与 {t}")
+                    raise SkillFormatError(f"conflicting type declarations for variable {k}: {state[k]} vs {t}")
         iface = Interface(
             inputs=inputs, defaults=defaults, outputs=outputs,
             pre=parse(i.get("pre")), post_safe=parse(i.get("post_safe")),
@@ -205,11 +205,11 @@ def load_skill(src) -> Skill:
         return Skill(name=d["skill"], version=Version.parse(d["version"]), interface=iface, state=state,
                      nodes=nodes, entry=d["entry"], edges=edges, raw=d)
     except KeyError as ex:
-        raise SkillFormatError(f"skill 定义缺少字段 {ex}") from ex
+        raise SkillFormatError(f"skill definition is missing field {ex}") from ex
 
 
 def load_skills(path) -> list[Skill]:
-    """读取目录下所有 *.yaml（一个文件可以用 --- 分隔多个 skill）。"""
+    """Load every *.yaml in a directory (one file may hold several skills separated by ---)."""
     out = []
     for p in sorted(Path(path).rglob("*.yaml")):
         for d in yaml.safe_load_all(p.read_text(encoding="utf-8")):

@@ -1,49 +1,49 @@
 # skillgraph
 
-设计文档 Step 1（暂未公开）§1–§8 的实现：skill 的图结构、良构性检查、执行与轨迹、缓存重放、接口精化与版本库。**不含进化**（§9 归责、§10 编辑与比较）。
+Implementation of §1–§8 of the Step 1 design document (not yet public): the graph structure of a skill, well-formedness checks, execution and traces, cached replay, interface refinement and a versioned library. **Evolution is not included** (§9 blame assignment, §10 editing and comparison).
 
 ```bash
-python examples/run_toys.py              # 六个 coding toy example
-python -m pytest tests -q                # 测试
-python -m skillgraph check examples/skills          # 对一个目录做入库检查
-python -m skillgraph show  examples/skills Coding coding.svg   # 渲染成 SVG（需要 Graphviz 的 dot）
+python examples/run_toys.py              # six coding toy examples
+python -m pytest tests -q                # tests
+python -m skillgraph check examples/skills          # admission check for a directory
+python -m skillgraph show  examples/skills Coding coding.svg   # render to SVG (needs Graphviz `dot`)
 ```
 
-依赖只有 PyYAML（测试另需 pytest）。
+The only dependency is PyYAML (tests also need pytest).
 
-## 模块与设计文档的对应
+## Modules and the design document
 
-| 模块 | 内容 | 设计文档 |
+| Module | Contents | Design doc |
 |---|---|---|
-| `types.py` | 可判定类型（bool / 枚举 / 有界整数 / 有限集合）与不透明类型 | §2 |
-| `expr.py` | 边条件与契约共用的表达式语言；Kleene 三值求值 | §3.1、§4 |
-| `logic.py` | 蕴含判定（代替 SMT，见下） | §6 |
-| `model.py` | `Skill` = 接口层 + 图层；四种节点；YAML 读取 | §1、§3、§5 |
-| `wellformed.py` | W0–W8 与静态预算检查 | §6 |
-| `executor.py` | 执行器、事后评估、缓存重放；`AgentBackend` 接口 | §7 |
-| `trace.py` | 嵌套轨迹 | §7.2 |
-| `refine.py` | 接口精化规则 | §8.1 |
-| `library.py` | 版本库、入库把关、证书、统计层（Beta 后验） | §1 统计层、§8.2 |
-| `viz.py` | 用 Graphviz 渲染 SVG：skill 图、一次运行叠加在 skill 图上的数据流 | — |
+| `types.py` | Decidable types (bool / enum / bounded int / finite set) and opaque types | §2 |
+| `expr.py` | Expression language shared by edge conditions and contracts; Kleene three-valued evaluation | §3.1, §4 |
+| `logic.py` | Entailment checking (replaces SMT, see below) | §6 |
+| `model.py` | `Skill` = interface layer + graph layer; four node kinds; YAML loading | §1, §3, §5 |
+| `wellformed.py` | W0–W8 and the static budget check | §6 |
+| `executor.py` | Executor, post-hoc evaluation, cached replay; the `AgentBackend` interface | §7 |
+| `trace.py` | Nested traces | §7.2 |
+| `refine.py` | Interface refinement rules | §8.1 |
+| `library.py` | Versioned library, admission gate, certificates, statistics layer (Beta posteriors) | §1 statistics layer, §8.2 |
+| `viz.py` | SVG rendering with Graphviz: skill graphs, and the data flow of a run overlaid on its skill graph | — |
 
-## 实现时对设计的细化
+## Refinements of the design made during implementation
 
-这些地方设计文档没有规定，或者实现时发现需要调整：
+These points are either left open by the design document or turned out to need adjustment during implementation:
 
-1. **循环计数器放在边上，由执行器加一。** 设计文档 §11 的 IR 让 `write_patch` 这个 Agent 自己写 `k`，这样终止性就依赖 Agent 守约。现在回边声明 `counter: k`，执行器每经过一次加一，任何节点都不能写计数器。W3 因此变成纯结构检查：去掉带计数器的边后图无环，且每条带计数器的边的守卫能推出 `k < 上界`。注意 `k` 的含义变成"已重试次数"，`int[0..2]` 配 `k < 2` 是总共 3 次尝试。
-2. **工具节点可以声明 `ensures`。** 它把可判定变量和语义谓词连起来（如 `rep == passes_repro(patch, issue, repo)`）。没有它，W8 无从证明"守卫成立 ⇒ Post 成立"。
-3. **用穷举 + 命题抽象代替 SMT。** 可判定变量在有限域上穷举；含谓词或不透明变量的原子公式当作自由布尔变量。判定是可靠的但不完备：它不知道谓词之间的语义关系（比如 `len(F) > 1` 蕴含 `len(F) > 0`），需要时把关系写进契约。
-4. **W5 / W6 / W8 共用一个"事实传播"分析**，而不是完整的 wp 计算：节点守约后留下后置条件，边留下守卫，变量被改写时相关事实失效，汇合处取交集，证明时按入边分别证。带循环的图不需要展开。W8 证明不了时只标记"未证明"并给出反例。
-5. **新增 W0（结构与类型）和 B（预算）两项硬性检查。** W0 包括：契约只能引用节点的读写集、边条件不能调用谓词、输入变量只读、未声明的标识符报错。B 静态算出最坏情况的模型调用次数，要求不超过声明的预算；调用节点的代价取被调 skill 声明的预算。
-6. **只有 `done` 才交付输出。** GiveUp / Reject 不交回半成品，否则调用方的变量会被一个已知有问题的值覆盖。W4 相应地只在"守卫能推出 `outcome == done`"的出边上认为调用节点的输出已写过。
-7. **谓词分两档。** `runtime` 里的运行时就能算；`judge` 里的只在事后评估时可用，运行时一律是 `?`。调用节点的契约（被调 skill 的 Post）通常要到事后评估才有 ⊤ / ⊥。
-8. **内核中止。** Pre 为 ⊥ 时直接 Reject；运行时 Inv 为 ⊥、超预算、写入类型不对、工具抛异常时，以 `give_up` 结束并在 `status` 里记下原因，不交付输出。
-9. **版本解析不跨大版本。** `Debug >= 1.0` 解析到 1.x 里最新的小版本。小版本入库必须满足精化规则；预算有变化时重新检查调用方，不通过则回滚。
-10. **重放时同一个缓存键出现多次**（重试时读集没变）按原顺序依次取用，相当于沿用相同的随机种子。
+1. **Loop counters live on edges and are incremented by the executor.** The IR in §11 of the design document has the `write_patch` agent write `k` itself, so termination would depend on the agent keeping its word. Now a back edge declares `counter: k`, the executor increments it on every traversal, and no node may write a counter. W3 therefore becomes a purely structural check: removing the counter edges leaves an acyclic graph, and the guard of every counter edge implies `k < bound`. Note that `k` now means "number of retries so far", so `int[0..2]` with `k < 2` gives 3 attempts in total.
+2. **Tool nodes may declare `ensures`.** It links decidable variables to semantic predicates (e.g. `rep == passes_repro(patch, issue, repo)`). Without it, W8 has no way to prove "guard holds ⇒ Post holds".
+3. **Exhaustive enumeration plus propositional abstraction instead of SMT.** Decidable variables are enumerated over their finite domains; atoms containing predicates or opaque variables are treated as free Boolean variables. The check is sound but incomplete: it does not know semantic relations between predicates (e.g. `len(F) > 1` implies `len(F) > 0`); such relations must be written into the contracts when needed.
+4. **W5 / W6 / W8 share one "fact propagation" analysis** instead of a full wp computation: a node that keeps its contract leaves its postcondition behind, an edge leaves its guard, facts about a variable are invalidated when the variable is overwritten, facts are intersected at join points, and proofs are done per incoming edge. Graphs with loops need no unrolling. When W8 cannot prove something it is only marked "unproved" and a counterexample is reported.
+5. **Two new hard checks: W0 (structure and types) and B (budget).** W0 covers: contracts may only reference the node's read/write sets, edge conditions may not call predicates, input variables are read-only, and undeclared identifiers are errors. B statically computes the worst-case number of model calls and requires it not to exceed the declared budget; the cost of a call node is the budget declared by the callee.
+6. **Only `done` delivers outputs.** GiveUp / Reject do not hand back partial results; otherwise the caller's variables would be overwritten by a value known to be bad. Accordingly, W4 considers a call node's outputs written only on outgoing edges whose guard implies `outcome == done`.
+7. **Two tiers of predicates.** Predicates in `runtime` can be computed at run time; those in `judge` are only available during post-hoc evaluation and are always `?` at run time. The contract of a call node (the callee's Post) usually only gets ⊤ / ⊥ in post-hoc evaluation.
+8. **Kernel aborts.** When Pre is ⊥ the run is rejected immediately; when the run-time Inv is ⊥, the budget is exceeded, a write has the wrong type, or a tool raises, the run ends with `give_up`, the reason is recorded in `status`, and no outputs are delivered.
+9. **Version resolution never crosses major versions.** `Debug >= 1.0` resolves to the latest minor version in 1.x. A minor version must satisfy the refinement rules to be admitted; if the budget changes, callers are re-checked and the admission is rolled back if they fail.
+10. **When the same cache key appears several times during replay** (a retry whose read set did not change), the entries are consumed in their original order, which amounts to reusing the same random seed.
 
-## 还没做的
+## Not done yet
 
-- 真实的 LLM 后端：目前只有 `ScriptedBackend` 和 `ReplayBackend`。接入时实现 `invoke(AgentCall) -> dict` 即可。
-- 库的持久化：skill 从 YAML 读入，但统计层和轨迹只在内存里（`Trace.to_json()` 可以导出）。
-- 预算只静态检查 `llm_calls`；费用和时间只记录在轨迹里。
-- 故障模型只是存下来，还没有编译成参数化马尔可夫链（属于验证文档的比较环节）。
+- A real LLM backend: only `ScriptedBackend` and `ReplayBackend` exist so far. To plug one in, implement `invoke(AgentCall) -> dict`.
+- Library persistence: skills are loaded from YAML, but the statistics layer and traces live only in memory (`Trace.to_json()` can export them).
+- The budget check is static and covers only `llm_calls`; cost and time are only recorded in traces.
+- Fault models are only stored; they are not yet compiled into parametric Markov chains (that belongs to the comparison stage of the verification document).

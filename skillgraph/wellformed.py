@@ -1,13 +1,13 @@
-"""良构性检查 W0–W8 与静态预算检查（设计文档 §6）。全部自动、不依赖 Agent。
+"""Well-formedness checks W0–W8 and the static budget check (design doc §6). Fully automatic, no agent involved.
 
-W0  结构与类型：引用都有声明、边条件只读可判定变量、契约只引用节点的读写集……
-W1  确定且完全   W2  可达   W3  终止   W4  先写后读
-W5  不变量保持   W6  调用接口匹配   W7  调用图无环
-B   预算：最坏情况下的模型调用次数不超过声明的预算
-W8  规约一致（可选）：在所有节点守约的前提下，Pre 出发一定满足 Post_safe
+W0  structure and types: all references declared, edge conditions read only decidable variables, contracts reference only the node's read/write sets, ...
+W1  deterministic and total   W2  reachability   W3  termination   W4  write before read
+W5  invariant preservation   W6  call interface match   W7  acyclic call graph
+B   budget: the worst-case number of model calls does not exceed the declared budget
+W8  spec consistency (optional): if every node keeps its contract, starting from Pre always establishes Post_safe
 
-W5 / W6 / W8 共用一个"事实传播"的前向数据流分析：每个节点守约后留下它的后置条件，
-每条边留下它的守卫；变量一旦被改写，提到它的事实就失效；汇合处取交集。
+W5 / W6 / W8 share one forward "fact propagation" data-flow analysis: a node that keeps its contract leaves its postcondition,
+every edge leaves its guard; once a variable is overwritten, facts mentioning it are invalidated; facts are intersected at join points.
 """
 from __future__ import annotations
 
@@ -18,8 +18,10 @@ from .logic import _abs_eval, entails, exactly_one, fmt_cex
 from .types import OUTCOMES
 
 HARD = ("W0", "W1", "W2", "W3", "W4", "W5", "W6", "W7", "B")
-NAMES = {"W0": "结构与类型", "W1": "确定且完全", "W2": "可达", "W3": "终止", "W4": "先写后读",
-         "W5": "不变量保持", "W6": "调用接口匹配", "W7": "调用图无环", "B": "预算", "W8": "规约一致"}
+NAMES = {"W0": "structure and types", "W1": "deterministic and total", "W2": "reachability", "W3": "termination",
+         "W4": "write before read",
+         "W5": "invariant preservation", "W6": "call interface match", "W7": "acyclic call graph",
+         "B": "budget", "W8": "spec consistency"}
 
 
 @dataclass
@@ -31,8 +33,8 @@ class Check:
     @property
     def status(self) -> str:
         if self.code == "W8":
-            return "已证明" if self.ok else "未证明"
-        return "通过" if self.ok else "不通过"
+            return "proved" if self.ok else "unproved"
+        return "pass" if self.ok else "FAIL"
 
 
 @dataclass
@@ -42,7 +44,7 @@ class Report:
 
     @property
     def ok(self) -> bool:
-        """硬性要求（W0–W7 与预算）是否全部通过。W8 不影响。"""
+        """Do all hard requirements (W0–W7 and budget) pass? W8 does not count."""
         return all(c.ok for c in self.checks if c.code in HARD)
 
     @property
@@ -56,18 +58,18 @@ class Report:
         return [c.code for c in self.checks if not c.ok and c.code in HARD]
 
     def __str__(self) -> str:
-        lines = [f"{self.skill}: {'合法' if self.ok else '不合法'}"
-                 f"（规约一致性{'已证明' if self.w8 else '未证明'}）"]
+        lines = [f"{self.skill}: {'well-formed' if self.ok else 'ill-formed'}"
+                 f" (spec consistency {'proved' if self.w8 else 'unproved'})"]
         for c in self.checks:
-            lines.append(f"  {c.code:<2} {NAMES[c.code]:　<6} {c.status}")
+            lines.append(f"  {c.code:<2} {NAMES[c.code]:<24} {c.status}")
             lines += [f"       - {m}" for m in c.messages]
         return "\n".join(lines)
 
 
-# ---------------------------------------------------------------- 通用工具
+# ---------------------------------------------------------------- utilities
 
 def _reach(skill, start: str, forward: bool = True) -> set:
-    """从 start 出发至少走一步能到的节点。"""
+    """Nodes reachable from start in at least one step."""
     seen, todo = set(), [start]
     while todo:
         v = todo.pop()
@@ -80,7 +82,7 @@ def _reach(skill, start: str, forward: bool = True) -> set:
 
 
 def _forward(skill, init, node_tf, edge_tf) -> dict:
-    """前向 must 分析：格是"集合 + 交集"，未到达的节点为 None。"""
+    """Forward must analysis: the lattice is "sets + intersection"; unreached nodes are None."""
     IN = {v: None for v in skill.nodes}
     IN[skill.entry] = frozenset(init)
     changed = True
@@ -99,13 +101,13 @@ def _forward(skill, init, node_tf, edge_tf) -> dict:
 
 
 def _callee_facts(node, callee) -> list:
-    """把被调 skill 的 Post_safe 和 Inv 翻译到调用方的变量上。"""
+    """Translate the callee's Post_safe and Inv into the caller's variables."""
     m = {k: Var(v) for k, v in {**node.bind_in, **node.bind_out}.items()}
     m["outcome"] = Var(node.outcome_var)
     known = set(callee.interface.types)
     out = []
     for c in conjuncts(callee.interface.post_safe) + [x for i in callee.interface.inv for x in conjuncts(i)]:
-        if vars_of(c) & known <= set(m):          # 没绑定的被调变量，调用方看不到，丢弃
+        if vars_of(c) & known <= set(m):          # unbound callee variables are invisible to the caller; drop them
             out.append(subst(c, m))
     return out
 
@@ -120,7 +122,7 @@ def _post_facts(skill, node, resolver) -> list:
 
 
 class _Facts:
-    """事实传播的结果：每条边上、每个节点入口处成立的事实集合。"""
+    """Result of fact propagation: the set of facts holding on every edge and at every node entry."""
 
     def __init__(self, skill, resolver):
         self.skill = skill
@@ -137,28 +139,28 @@ class _Facts:
         return frozenset(x for x in f if e.counter not in vars_of(x)) if e.counter else f
 
     def arriving(self, v) -> list:
-        """到达节点 v 的每条路径（按入边区分）上成立的事实。比入口处的交集更精确。"""
-        out = [("入口", self.init)] if v == self.skill.entry else []
+        """Facts holding on each path to node v (distinguished by incoming edge). More precise than the intersection at the entry."""
+        out = [("entry", self.init)] if v == self.skill.entry else []
         for e in self.skill.in_edges(v):
             if self.IN[e.src] is not None:
                 out.append((f"{e.src} → {v}", self._edge(e, self._node(e.src, self.IN[e.src]))))
         return out
 
     def prove(self, v, goal, types, shown=None) -> list:
-        """在到达 v 的每条路径上证明 goal。返回证明不了的路径及反例。"""
+        """Prove goal on every path reaching v. Returns the paths where it cannot be proved, with counterexamples."""
         fails, shown = [], shown or show(goal)
         for label, facts in self.arriving(v):
             try:
                 cex = entails(list(facts), goal, types)
             except ExprError as ex:
-                fails.append(f"经 {label}: {ex}")
+                fails.append(f"via {label}: {ex}")
                 continue
             if cex is not None:
-                fails.append(f"经 {label}: 证明不了 {shown}；反例: {fmt_cex(cex)}")
+                fails.append(f"via {label}: cannot prove {shown}; counterexample: {fmt_cex(cex)}")
         return fails
 
 
-# ---------------------------------------------------------------- 各项检查
+# ---------------------------------------------------------------- checks
 
 def _w0(skill) -> Check:
     msgs, T, I = [], skill.types, skill.interface
@@ -168,43 +170,43 @@ def _w0(skill) -> Check:
         for n in sorted(vars_of(e)):
             if n in universe:
                 if n not in allowed:
-                    msgs.append(f"{where}: 不能引用变量 {n}")
+                    msgs.append(f"{where}: may not reference variable {n}")
                 elif guard and not universe[n].decidable:
-                    msgs.append(f"{where}: 边条件只能读可判定类型，{n} 是 {universe[n]}")
+                    msgs.append(f"{where}: edge conditions may only read decidable types, {n} is {universe[n]}")
             elif n not in syms:
-                msgs.append(f"{where}: 未声明的标识符 {n}")
+                msgs.append(f"{where}: undeclared identifier {n}")
         if guard and calls_of(e):
-            msgs.append(f"{where}: 边条件不能调用谓词 {sorted(calls_of(e))}，请改成 Agent 节点输出枚举值")
+            msgs.append(f"{where}: edge conditions may not call predicates {sorted(calls_of(e))}; have an agent node output an enum value instead")
 
     if skill.entry not in skill.nodes:
-        msgs.append(f"入口节点 {skill.entry} 不存在")
+        msgs.append(f"entry node {skill.entry} does not exist")
     for v, n in skill.nodes.items():
         for x in (*n.reads, *n.writes):
             if x not in T:
-                msgs.append(f"节点 {v}: 读写集里的变量 {x} 未声明")
+                msgs.append(f"node {v}: variable {x} in the read/write set is undeclared")
         for x in n.writes:
             if x in I.inputs:
-                msgs.append(f"节点 {v}: 不能改写输入变量 {x}")
+                msgs.append(f"node {v}: may not overwrite input variable {x}")
             if x in skill.counters:
-                msgs.append(f"节点 {v}: 不能改写循环计数器 {x}（计数器只由执行器在回边上加一）")
+                msgs.append(f"node {v}: may not write loop counter {x} (counters are only incremented by the executor on back edges)")
         outs = skill.out_edges(v)
         if n.kind == "terminal" and outs:
-            msgs.append(f"终点 {v} 不能有出边")
+            msgs.append(f"terminal {v} may not have outgoing edges")
         if n.kind != "terminal" and not outs:
-            msgs.append(f"节点 {v} 没有出边")
+            msgs.append(f"node {v} has no outgoing edges")
         if n.kind in ("agent", "tool"):
-            chk(n.contract.pre, set(n.reads), f"节点 {v} 的前置条件")
-            chk(n.contract.post, set(n.reads) | set(n.writes), f"节点 {v} 的后置条件")
+            chk(n.contract.pre, set(n.reads), f"precondition of node {v}")
+            chk(n.contract.post, set(n.reads) | set(n.writes), f"postcondition of node {v}")
     for e in skill.edges:
         for x in (e.src, e.dst):
             if x not in skill.nodes:
-                msgs.append(f"边 {e.src} → {e.dst}: 节点 {x} 不存在")
-        chk(e.guard, set(T), f"边 {e.src} → {e.dst}", guard=True)
+                msgs.append(f"edge {e.src} → {e.dst}: node {x} does not exist")
+        chk(e.guard, set(T), f"edge {e.src} → {e.dst}", guard=True)
         if e.counter and (e.counter not in T or T[e.counter].kind != "int" or e.counter in I.inputs):
-            msgs.append(f"边 {e.src} → {e.dst}: 计数器 {e.counter} 必须是非输入的有界整数")
+            msgs.append(f"edge {e.src} → {e.dst}: counter {e.counter} must be a non-input bounded integer")
     for x in I.outputs:
         if x in I.inputs:
-            msgs.append(f"变量 {x} 不能同时是输入和输出")
+            msgs.append(f"variable {x} cannot be both an input and an output")
     it = I.types
     chk(I.pre, set(I.inputs), "Pre", universe=it)
     chk(I.post_safe, set(it), "Post_safe", universe=it)
@@ -223,13 +225,13 @@ def _w1(skill) -> Check:
         try:
             cex = entails(conjuncts(n.contract.post), exactly_one(guards), T)
         except ExprError as ex:
-            msgs.append(f"节点 {v}: {ex}")
+            msgs.append(f"node {v}: {ex}")
             continue
         if cex is not None:
             env = {k: val for k, val in cex.items() if k in T}
             hit = [show(g) for g in guards if _abs_eval(g, env, T)]
-            what = "没有出边成立（会卡住）" if not hit else f"同时有 {len(hit)} 条出边成立: {hit}"
-            msgs.append(f"节点 {v}: 状态 {fmt_cex(env)} 下{what}")
+            what = "no outgoing edge is enabled (stuck)" if not hit else f"{len(hit)} outgoing edges are enabled at once: {hit}"
+            msgs.append(f"node {v}: in state {fmt_cex(env)}, {what}")
     return Check("W1", not msgs, msgs)
 
 
@@ -238,21 +240,21 @@ def _w2(skill) -> Check:
     fwd = _reach(skill, skill.entry) | {skill.entry}
     terms = [v for v, n in skill.nodes.items() if n.kind == "terminal"]
     if not terms:
-        msgs.append("没有终点")
+        msgs.append("no terminal")
     back = set(terms)
     for t in terms:
         back |= _reach(skill, t, forward=False)
     for v in skill.nodes:
         if v not in fwd:
-            msgs.append(f"节点 {v} 从入口不可达")
+            msgs.append(f"node {v} is unreachable from the entry")
         elif v not in back:
-            msgs.append(f"节点 {v} 走不到任何终点")
+            msgs.append(f"node {v} cannot reach any terminal")
     return Check("W2", not msgs, msgs)
 
 
 def _w3(skill) -> Check:
     msgs, T = [], skill.types
-    # 去掉带计数器的边之后，图必须无环
+    # after removing counter edges, the graph must be acyclic
     plain = {v: [e.dst for e in skill.out_edges(v) if not e.counter] for v in skill.nodes}
     state = {}
 
@@ -260,7 +262,7 @@ def _w3(skill) -> Check:
         state[v] = 1
         for w in plain.get(v, ()):
             if state.get(w) == 1:
-                msgs.append(f"循环 {' → '.join(path[path.index(w):] + [w])} 上没有带计数器的边")
+                msgs.append(f"cycle {' → '.join(path[path.index(w):] + [w])} has no counter edge")
             elif w not in state:
                 dfs(w, path + [w])
         state[v] = 2
@@ -273,17 +275,17 @@ def _w3(skill) -> Check:
             hi = T[e.counter].hi
             try:
                 if entails([e.guard], Bin("<", Var(e.counter), Lit(hi)), T) is not None:
-                    msgs.append(f"边 {e.src} → {e.dst}: 守卫 {show(e.guard)} 不能保证 {e.counter} < {hi}，计数器会越界")
+                    msgs.append(f"edge {e.src} → {e.dst}: guard {show(e.guard)} does not ensure {e.counter} < {hi}; the counter can overflow")
             except ExprError as ex:
-                msgs.append(f"边 {e.src} → {e.dst}: {ex}")
+                msgs.append(f"edge {e.src} → {e.dst}: {ex}")
     return Check("W3", not msgs, msgs)
 
 
 def _w4(skill) -> Check:
     msgs, I, T = [], skill.interface, skill.types
 
-    # 被调 skill 只有以 done 结束才交付输出，所以调用节点的输出变量
-    # 只在"守卫能推出 outcome == done"的出边上才算写过。
+    # a callee only delivers outputs when it ends with done, so the output variables of a call node
+    # count as written only on outgoing edges whose guard implies outcome == done.
     def writes(n):
         return frozenset([n.outcome_var] if n.kind == "call" else n.writes)
 
@@ -300,16 +302,16 @@ def _w4(skill) -> Check:
             continue
         for x in n.reads:
             if x not in d:
-                msgs.append(f"节点 {v} 读 {x}，但存在一条到达它的路径上 {x} 还没被写过")
+                msgs.append(f"node {v} reads {x}, but {x} is unwritten on some path reaching it")
         after = d | writes(n)
         for e in skill.out_edges(v):
             for x in sorted(vars_of(e.guard) & set(skill.types)):
                 if x not in after:
-                    msgs.append(f"边 {v} → {e.dst} 的守卫读 {x}，但它可能还没被写过")
+                    msgs.append(f"the guard of edge {v} → {e.dst} reads {x}, which may be unwritten")
         if n.kind == "terminal" and n.outcome == "done":
             for x in I.outputs:
                 if x not in d:
-                    msgs.append(f"终点 {v} 以 done 结束，但输出 {x} 可能还没被写过")
+                    msgs.append(f"terminal {v} ends with done, but output {x} may be unwritten")
     return Check("W4", not msgs, msgs)
 
 
@@ -323,11 +325,11 @@ def _w5(skill, facts) -> Check:
             try:
                 cex = entails(facts.post[v], inv, T)
             except ExprError as ex:
-                msgs.append(f"节点 {v}: {ex}")
+                msgs.append(f"node {v}: {ex}")
                 continue
             if cex is not None:
-                what = {"agent": "契约", "tool": "ensures", "call": "被调 skill 的接口"}[n.kind]
-                msgs.append(f"节点 {v} 改写了 {sorted(iv & set(n.writes))}，但它的{what}不能保证 {show(inv)}")
+                what = {"agent": "contract", "tool": "ensures", "call": "callee interface"}[n.kind]
+                msgs.append(f"node {v} writes {sorted(iv & set(n.writes))}, but its {what} does not ensure {show(inv)}")
     return Check("W5", not msgs, msgs)
 
 
@@ -336,29 +338,29 @@ def _w6(skill, facts, resolver) -> Check:
     for n in skill.calls():
         callee = resolver(n.skill, n.min_version) if resolver else None
         if callee is None:
-            msgs.append(f"调用节点 {n.id}: 库里找不到 {n.skill} >= {n.min_version}")
+            msgs.append(f"call node {n.id}: no {n.skill} >= {n.min_version} in the library")
             continue
         ci, bad = callee.interface, False
         for k, t in ci.inputs.items():
             if k not in n.bind_in:
                 if k not in ci.defaults:
-                    msgs.append(f"调用节点 {n.id}: 没有绑定 {callee.key} 的必填输入 {k}")
+                    msgs.append(f"call node {n.id}: required input {k} of {callee.key} is not bound")
                     bad = True
             elif n.bind_in[k] not in T or T[n.bind_in[k]] != t:
-                msgs.append(f"调用节点 {n.id}: 输入 {k}: {t} 绑定到了 {n.bind_in[k]}: {T.get(n.bind_in[k], '未声明')}")
+                msgs.append(f"call node {n.id}: input {k}: {t} is bound to {n.bind_in[k]}: {T.get(n.bind_in[k], 'undeclared')}")
                 bad = True
         for k in n.bind_in:
             if k not in ci.inputs:
-                msgs.append(f"调用节点 {n.id}: {callee.key} 没有输入 {k}")
+                msgs.append(f"call node {n.id}: {callee.key} has no input {k}")
                 bad = True
         for k, x in n.bind_out.items():
             if k not in ci.outputs:
-                msgs.append(f"调用节点 {n.id}: {callee.key} 没有输出 {k}")
+                msgs.append(f"call node {n.id}: {callee.key} has no output {k}")
             elif x not in T or T[x] != ci.outputs[k]:
-                msgs.append(f"调用节点 {n.id}: 输出 {k}: {ci.outputs[k]} 写回到了 {x}: {T.get(x, '未声明')}")
+                msgs.append(f"call node {n.id}: output {k}: {ci.outputs[k]} is written back to {x}: {T.get(x, 'undeclared')}")
         if not bad:
             pre = subst(ci.pre, {k: Var(v) for k, v in n.bind_in.items()})
-            msgs += [f"调用节点 {n.id}: 调用方保证不了 {callee.key} 的 Pre；{m}" for m in facts.prove(n.id, pre, T)]
+            msgs += [f"call node {n.id}: the caller cannot guarantee the Pre of {callee.key}; {m}" for m in facts.prove(n.id, pre, T)]
     return Check("W6", not msgs, msgs)
 
 
@@ -368,7 +370,7 @@ def _w7(skill, resolver) -> Check:
     def dfs(s, path):
         for n in s.calls():
             if n.skill in path:
-                msgs.append(f"调用图有环: {' → '.join(path + [n.skill])}")
+                msgs.append(f"cycle in the call graph: {' → '.join(path + [n.skill])}")
                 continue
             callee = resolver(n.skill, n.min_version) if resolver else None
             if callee is not None:
@@ -379,10 +381,10 @@ def _w7(skill, resolver) -> Check:
 
 
 def llm_bound(skill, resolver, _depth: int = 0) -> int:
-    """最坏情况下的模型调用次数上界。
+    """Upper bound on the worst-case number of model calls.
 
-    不在环上的节点至多执行一次；环上的节点至多执行 1 + Σ(该环内各计数器的容量) 次。
-    Skill 调用节点的单次代价取被调 skill 声明的预算。
+    A node not on a cycle runs at most once; a node on a cycle runs at most 1 + Σ(capacities of the counters in that cycle) times.
+    The per-call cost of a skill call node is the budget declared by the callee.
     """
     T, total = skill.types, 0
     for v, n in skill.nodes.items():
@@ -407,9 +409,9 @@ def llm_bound(skill, resolver, _depth: int = 0) -> int:
 def _budget(skill, resolver) -> Check:
     bound, decl = llm_bound(skill, resolver), skill.interface.budget.get("llm_calls")
     if decl is None:
-        return Check("B", True, [f"未声明预算；最坏情况需要 {bound} 次模型调用"])
+        return Check("B", True, [f"no budget declared; worst case needs {bound} model calls"])
     if bound > decl:
-        return Check("B", False, [f"最坏情况需要 {bound} 次模型调用，超过声明的预算 {decl}"])
+        return Check("B", False, [f"worst case needs {bound} model calls, exceeding the declared budget {decl}"])
     return Check("B", True)
 
 
@@ -417,17 +419,17 @@ def _w8(skill, facts) -> Check:
     msgs, T = [], skill.types
     for v, n in skill.nodes.items():
         if n.kind == "agent":
-            msgs += [f"节点 {v} 的前置条件: {m}" for m in facts.prove(v, n.contract.pre, T)]
+            msgs += [f"precondition of node {v}: {m}" for m in facts.prove(v, n.contract.pre, T)]
         elif n.kind == "terminal":
             goal = subst(skill.interface.post_safe, {"outcome": Lit(n.outcome)})
-            msgs += [f"终点 {v}: {m}" for m in facts.prove(v, goal, T, f"Post_safe（{show(skill.interface.post_safe)}）")]
+            msgs += [f"terminal {v}: {m}" for m in facts.prove(v, goal, T, f"Post_safe ({show(skill.interface.post_safe)})")]
     return Check("W8", not msgs, msgs)
 
 
 def check_skill(skill, resolver=None) -> Report:
-    """Gate 0 的良构性部分。resolver(name, min_version) -> Skill | None 用来解析被调 skill。"""
+    """The well-formedness part of Gate 0. resolver(name, min_version) -> Skill | None resolves callees."""
     checks = [_w0(skill)]
-    if not checks[0].ok:          # 结构都不对，后面的分析没有意义
+    if not checks[0].ok:          # structure is wrong; the remaining analyses are meaningless
         return Report(skill.key, checks)
     facts = _Facts(skill, resolver)
     checks += [_w1(skill), _w2(skill), _w3(skill), _w4(skill), _w5(skill, facts),

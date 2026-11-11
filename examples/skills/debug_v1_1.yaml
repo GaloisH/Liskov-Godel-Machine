@@ -1,5 +1,5 @@
-# Debug v1.1：设计文档 §11.4 的候选 δ1——只改了三条出边的守卫，接口不变（接口兼容，小版本 +1）。
-# 现在 W8 可以证明：rep && suite 直接推出 Post_safe。
+# Debug v1.1: candidate δ1 from design doc §11.4. Only the guards of three outgoing edges change; the interface is unchanged (compatible, minor version +1).
+# W8 is now provable: rep && suite directly implies Post_safe.
 skill: Debug
 version: "1.1"
 interface:
@@ -20,14 +20,14 @@ nodes:
     kind: agent
     reads: [issue, repo]
     writes: [F]
-    prompt: "根据 issue 找出需要修改的文件。"
+    prompt: "Find the files that need to change for the issue."
     contract: {pre: "true", post: "len(F) > 0 && relevant(F, issue)"}
     prior: Beta(1,1)
   write_patch:
     kind: agent
     reads: [issue, repo, F]
     writes: [patch]
-    prompt: "只修改 F 里的文件来修复 issue，不要碰测试。"
+    prompt: "Fix the issue by editing only files in F. Do not touch the tests."
     contract: {pre: "len(F) > 0", post: "files(patch) ⊆ F && !touches_tests(patch)"}
     fault_model: {ok: "a*b", regress: "a*(1-b)", nofix: "1-a"}
   test:

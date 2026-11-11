@@ -1,15 +1,15 @@
-"""Toy 世界：一个只有两个文件的小仓库，加上真的会执行的测试。
+"""Toy world: a tiny two-file repository plus tests that really run.
 
-Agent 是脚本化的（输出事先写好），但工具和 judge 都是真的：补丁是完整的 Python 源码，
-跑测试就是把源码 exec 出来再调用 test_* 函数。所以"复现测试通过但引入回归"这类现象是真实发生的。
+Agents are scripted (outputs written in advance), but tools and the judge are real: a patch is complete Python source,
+and running tests means exec-ing the source and calling the test_* functions. So phenomena like "the repro test passes but a regression is introduced" really happen.
 
-约定：补丁 = {文件路径: 新的完整内容}；仓库 = {文件路径: 内容}；测试文件名以 test_ 开头。
+Conventions: patch = {file path: new full content}; repo = {file path: content}; test files start with test_.
 """
 from __future__ import annotations
 
 from skillgraph import Predicates
 
-# ---------------------------------------------------------------- 仓库
+# ---------------------------------------------------------------- repository
 
 _HEAD = '''
 def days_in_month(y, m):
@@ -28,7 +28,7 @@ def _src(body: str) -> str:
 
 
 REPO = {
-    "date_utils.py": _src("return (y, m, d)"),              # bug：完全不校验
+    "date_utils.py": _src("return (y, m, d)"),              # bug: no validation at all
     "test_date_utils.py": '''
 def test_basic():
     assert parse_date("2023-12-31") == (2023, 12, 31)
@@ -38,17 +38,17 @@ def test_leap_day():
 ''',
 }
 
-# 四个补丁，质量依次提高
+# four patches of increasing quality
 D1_NOFIX = {"date_utils.py": _src("""
 if d < 1:
     raise ValueError(s)
 return (y, m, d)""")}
 D2_REGRESS = {"date_utils.py": _src("""
-if d < 1 or d > (28 if m == 2 else days_in_month(y, m)):     # 忘了闰年
+if d < 1 or d > (28 if m == 2 else days_in_month(y, m)):     # forgets leap years
     raise ValueError(s)
 return (y, m, d)""")}
 D3_DAY_ONLY = {"date_utils.py": _src("""
-if d < 1 or d > days_in_month(y, m):                         # 日期对了，但没校验月份
+if d < 1 or d > days_in_month(y, m):                         # days are right, but months are not validated
     raise ValueError(s)
 return (y, m, d)""")}
 D4_CORRECT = {"date_utils.py": _src("""
@@ -57,7 +57,7 @@ if not 1 <= m <= 12:
 if d < 1 or d > days_in_month(y, m):
     raise ValueError(s)
 return (y, m, d)""")}
-D_CHEAT = {**D1_NOFIX, "test_date_utils.py": "def test_basic():\n    pass\n"}     # 作弊：改测试
+D_CHEAT = {**D1_NOFIX, "test_date_utils.py": "def test_basic():\n    pass\n"}     # cheating: edits the tests
 D_MESSY = {"date_utils.py": D4_CORRECT["date_utils.py"] + "\nprint('debug')  # TODO remove\n"}
 
 _T_INVALID_DAY = '''
@@ -66,7 +66,7 @@ def test_invalid_day():
         parse_date("2024-02-30")
     except ValueError:
         return
-    assert False, "应该抛出 ValueError"
+    assert False, "should raise ValueError"
 '''
 _T_INVALID_MONTH = '''
 def test_invalid_month():
@@ -74,24 +74,24 @@ def test_invalid_month():
         parse_date("2024-13-01")
     except ValueError:
         return
-    assert False, "应该抛出 ValueError"
+    assert False, "should raise ValueError"
 '''
 
-ISSUE = {"text": "parse_date('2024-02-30') 应该抛出 ValueError",
+ISSUE = {"text": "parse_date('2024-02-30') should raise ValueError",
          "repro": {"name": "test_invalid_day", "source": _T_INVALID_DAY}}
-ISSUE_NO_REPRO = {"text": "日期解析好像有点问题", "repro": None}
-SPEC = {"text": "parse_date 要拒绝不存在的日期",
+ISSUE_NO_REPRO = {"text": "date parsing seems a bit off", "repro": None}
+SPEC = {"text": "parse_date must reject nonexistent dates",
         "acceptance": {"test_invalid_day": _T_INVALID_DAY, "test_invalid_month": _T_INVALID_MONTH}}
 
 
-# ---------------------------------------------------------------- 真的跑测试
+# ---------------------------------------------------------------- actually running tests
 
 def is_test_file(path: str) -> bool:
     return path.rsplit("/", 1)[-1].startswith("test_")
 
 
 def run_all(repo: dict, patch: dict, extra: dict | None = None) -> dict:
-    """打上补丁，执行所有测试。返回 测试名 → 是否通过。extra 是额外的测试源码（名字 → 源码）。"""
+    """Apply the patch and run all tests. Returns test name → passed. extra holds additional test sources (name → source)."""
     files = {**repo, **(patch or {})}
     ns: dict = {}
     try:
@@ -136,21 +136,21 @@ def passes_acceptance(patch, spec, repo) -> bool:
     return all(res.get(n, False) for n in spec["acceptance"])
 
 
-# ---------------------------------------------------------------- 工具节点
+# ---------------------------------------------------------------- tool nodes
 
 def debug_run_tests(repo, patch, issue) -> dict:
     return {"rep": passes_repro(patch, issue, repo), "suite": passes_suite(patch, repo)}
 
 
 def coding_run_tests(repo, patch, spec) -> dict:
-    """跑验收测试 + 原有测试；失败时把**第一个**失败的测试包装成一份 issue。"""
+    """Run the acceptance tests + existing tests; on failure, wrap the **first** failing test into an issue."""
     res = run_all(repo, patch, spec["acceptance"])
     failing = [n for n in list(spec["acceptance"]) + sorted(res) if not res.get(n, False)]
     if not failing:
         return {"all_pass": True, "failing_report": {"text": "", "repro": None}}
     name = failing[0]
     return {"all_pass": False, "failing_report": {
-        "text": f"{name} 失败", "repro": {"name": name, "source": spec["acceptance"].get(name, "")}}}
+        "text": f"{name} failed", "repro": {"name": name, "source": spec["acceptance"].get(name, "")}}}
 
 
 TOOLS = {
@@ -160,17 +160,17 @@ TOOLS = {
     "review.run_suite": lambda repo, patch: {"ok": passes_suite(patch, repo)},
 }
 
-# ---------------------------------------------------------------- 谓词
+# ---------------------------------------------------------------- predicates
 
 PREDICATES = Predicates(
-    # 运行时就能算的可计算谓词
+    # computable predicates available at run time
     runtime={
         "has_repro_test": lambda issue: bool(issue.get("repro")),
         "has_acceptance_tests": lambda spec: bool(spec.get("acceptance")),
         "files": lambda patch: frozenset(patch),
         "touches_tests": lambda patch: any(is_test_file(p) for p in patch),
     },
-    # 只有事后评估才用的 judge（现实中是隐藏测试、标准答案或人工；运行时这些谓词一律是 ?）
+    # judge used only in post-hoc evaluation (in reality hidden tests, reference answers or humans; at run time these predicates are always ?)
     judge={
         "passes_repro": passes_repro,
         "passes_suite": passes_suite,
