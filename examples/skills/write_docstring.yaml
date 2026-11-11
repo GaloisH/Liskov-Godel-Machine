@@ -1,0 +1,20 @@
+# WriteDocstring：单节点 skill——图的退化情况（设计文档 §13）。以后进化时可以把它扩展成多节点图。
+skill: WriteDocstring
+version: "1.0"
+interface:
+  inputs:  {code: text}
+  outputs: {doc: text}
+  pre: "len(code) > 0"
+  post_safe: "outcome == done -> describes(doc, code)"
+  budget: {llm_calls: 1}
+nodes:
+  write:
+    kind: agent
+    reads: [code]
+    writes: [doc]
+    prompt: "为这段代码写一句话的 docstring。"
+    contract: {pre: "len(code) > 0", post: "len(doc) > 0 && describes(doc, code)"}
+  done: {kind: terminal, outcome: done}
+entry: write
+edges:
+  - {src: write, dst: done, guard: "true"}

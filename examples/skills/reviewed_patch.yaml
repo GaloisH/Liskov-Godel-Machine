@@ -1,0 +1,51 @@
+# ReviewedPatch：带代码评审的实现流程。演示"语义分支"的写法（设计文档 §4）——
+# "代码是否干净"不能写在边上，而是由 review 这个 Agent 节点输出枚举值 verdict，边只判定 verdict。
+skill: ReviewedPatch
+version: "1.0"
+interface:
+  inputs:  {spec: spec, repo: repo}
+  outputs: {patch: patch}
+  pre: "true"
+  post_safe: "outcome == done -> passes_suite(patch, repo) && clean(patch)"
+  inv: ["!touches_tests(patch)"]
+  budget: {llm_calls: 6}
+state:
+  feedback: text
+  verdict: "{approve, revise}"
+  ok: bool
+  round: "int[0..2]"
+nodes:
+  init:                         # implement 在第一轮就要读 feedback，所以必须先写一次（W4：先写后读）
+    kind: tool
+    reads: []
+    writes: [feedback]
+    fn: review.no_feedback
+  implement:
+    kind: agent
+    reads: [spec, repo, feedback]
+    writes: [patch]
+    prompt: "实现需求；如果有评审意见，按意见修改。不要碰测试。"
+    contract: {post: "!touches_tests(patch)"}
+  review:
+    kind: agent
+    reads: [spec, patch]
+    writes: [verdict, feedback]
+    prompt: "评审补丁。干净就 approve，否则 revise 并给出意见。"
+    contract: {post: "verdict == approve -> clean(patch)"}
+  test:
+    kind: tool
+    reads: [repo, patch]
+    writes: [ok]
+    fn: review.run_suite
+    ensures: "ok == passes_suite(patch, repo)"
+  done:    {kind: terminal, outcome: done}
+  give_up: {kind: terminal, outcome: give_up}
+entry: init
+edges:
+  - {src: init,      dst: implement, guard: "true"}
+  - {src: implement, dst: review,    guard: "true"}
+  - {src: review, dst: test,      guard: "verdict == approve", label: approved}
+  - {src: review, dst: implement, guard: "verdict == revise && round < 2", counter: round, label: revise}
+  - {src: review, dst: give_up,   guard: "verdict == revise && round >= 2"}
+  - {src: test,   dst: done,      guard: "ok"}
+  - {src: test,   dst: give_up,   guard: "!ok"}

@@ -1,0 +1,47 @@
+# Debug v1.0：设计文档 §11.1 的版本，带一个故意留下的漏洞——Done 的守卫只看 rep，没看 suite。
+# W1–W7 都能通过，但 W8 证明不了（规约一致性未证明），这是入库时就能看到的预警。
+skill: Debug
+version: "1.0"
+interface:
+  inputs:  {issue: issue, repo: repo}
+  outputs: {patch: patch}
+  pre: "has_repro_test(issue)"
+  post_safe: "outcome == done -> passes_repro(patch, issue, repo) && passes_suite(patch, repo)"
+  post_live: "outcome == done"
+  inv: ["!touches_tests(patch)"]
+  budget: {llm_calls: 8}
+state:
+  F: "list[path]"        # 不透明
+  rep: bool              # 可判定
+  suite: bool            # 可判定
+  k: "int[0..2]"         # 循环计数器：已重试次数
+nodes:
+  locate:
+    kind: agent
+    reads: [issue, repo]
+    writes: [F]
+    prompt: "根据 issue 找出需要修改的文件。"
+    contract: {pre: "true", post: "len(F) > 0 && relevant(F, issue)"}
+    prior: Beta(1,1)
+  write_patch:
+    kind: agent
+    reads: [issue, repo, F]
+    writes: [patch]
+    prompt: "只修改 F 里的文件来修复 issue，不要碰测试。"
+    contract: {pre: "len(F) > 0", post: "files(patch) ⊆ F && !touches_tests(patch)"}
+    fault_model: {ok: "a*b", regress: "a*(1-b)", nofix: "1-a"}
+  test:
+    kind: tool
+    reads: [repo, patch, issue]
+    writes: [rep, suite]
+    fn: debug.run_tests
+    ensures: "rep == passes_repro(patch, issue, repo) && suite == passes_suite(patch, repo)"
+  done:    {kind: terminal, outcome: done}
+  give_up: {kind: terminal, outcome: give_up}
+entry: locate
+edges:
+  - {src: locate,      dst: write_patch, guard: "true"}
+  - {src: write_patch, dst: test,        guard: "true"}
+  - {src: test, dst: done,        guard: "rep"}                       # ← 漏洞：没看 suite
+  - {src: test, dst: write_patch, guard: "!rep && k < 2", counter: k}
+  - {src: test, dst: give_up,     guard: "!rep && k >= 2"}

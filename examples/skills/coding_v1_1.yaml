@@ -1,0 +1,53 @@
+# Coding v1.1：调用方自己补一道检查——Debug 交回 done 之后回到 test 重新验收（带计数器 r 的循环）。
+# 接口的 Pre / Post / Inv / 输入输出都没变，只有预算变大了，所以是接口兼容修改。W8 现在可以证明。
+skill: Coding
+version: "1.1"
+interface:
+  inputs:  {spec: spec, repo: repo}
+  outputs: {patch: patch}
+  pre: "has_acceptance_tests(spec)"
+  post_safe: "outcome == done -> passes_acceptance(patch, spec, repo) && passes_suite(patch, repo)"
+  inv: ["!touches_tests(patch)"]
+  budget: {llm_calls: 26}        # 2 + 3 次 Debug × 8
+state:
+  plan: text
+  all_pass: bool
+  failing_report: issue
+  r: "int[0..2]"                 # 循环计数器：已调用 Debug 的次数
+nodes:
+  understand:
+    kind: agent
+    reads: [spec, repo]
+    writes: [plan]
+    prompt: "阅读需求，写出实现计划。"
+    contract: {post: "len(plan) > 0"}
+  implement:
+    kind: agent
+    reads: [spec, repo, plan]
+    writes: [patch]
+    prompt: "按计划实现需求，不要碰测试。"
+    contract: {pre: "len(plan) > 0", post: "!touches_tests(patch)"}
+  test:
+    kind: tool
+    reads: [repo, patch, spec]
+    writes: [all_pass, failing_report]
+    fn: coding.run_tests
+    ensures: >-
+      all_pass == (passes_acceptance(patch, spec, repo) && passes_suite(patch, repo))
+      && (!all_pass -> has_repro_test(failing_report))
+  debug:
+    kind: call
+    skill: "Debug >= 1.0"
+    bind_in:  {issue: failing_report, repo: repo}
+    bind_out: {patch: patch}
+  done:    {kind: terminal, outcome: done}
+  give_up: {kind: terminal, outcome: give_up}
+entry: understand
+edges:
+  - {src: understand, dst: implement, guard: "true"}
+  - {src: implement,  dst: test,      guard: "true"}
+  - {src: test,  dst: done,    guard: "all_pass"}
+  - {src: test,  dst: debug,   guard: "!all_pass && r < 2", counter: r}
+  - {src: test,  dst: give_up, guard: "!all_pass && r >= 2"}
+  - {src: debug, dst: test,    guard: "debug.outcome == done", label: re-check}
+  - {src: debug, dst: give_up, guard: "debug.outcome != done"}

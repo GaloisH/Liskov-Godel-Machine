@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# 本地文档与脚本（不公开）
+docs/
+scripts/
+
+# 生成的 SVG（精选的放在 assets/）
+examples/output/
+
+# 临时文件与工具产物
+.tmp/
+.dsh-acl-report/
+.claude/
+.vscode/
+.idea/
